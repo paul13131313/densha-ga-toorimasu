@@ -514,16 +514,19 @@ main {
     // Speed: whole train passes in TRAIN_DURATION
     trainSpeed = (cw + trainTotalW) / (TRAIN_DURATION * 60);
 
+    // Calculate actual pass duration (frames / 60fps)
+    const actualDuration = (cw + trainTotalW) / trainSpeed / 60;
+
     // Lower video volume
     video.volume = 0.02;
 
-    // Play train sound
-    playTrainSound();
+    // Play train sound for the full pass duration
+    playTrainSound(actualDuration);
 
     setStatus('train passing...');
   }
 
-  function playTrainSound() {
+  function playTrainSound(duration) {
     if (!trainSndBuffer || !audioCtx) return;
 
     const source = audioCtx.createBufferSource();
@@ -531,12 +534,13 @@ main {
 
     const gain = audioCtx.createGain();
     const now = audioCtx.currentTime;
-    const T = 3.5;
+    const T = duration + 0.5; // add margin
 
+    // Doppler-style fade: approach → peak → recede
     gain.gain.setValueAtTime(0.01, now);
     gain.gain.exponentialRampToValueAtTime(0.8, now + 0.3);
-    gain.gain.exponentialRampToValueAtTime(1.0, now + T * 0.4);
-    gain.gain.setValueAtTime(1.0, now + T * 0.55);
+    gain.gain.exponentialRampToValueAtTime(1.0, now + T * 0.35);
+    gain.gain.setValueAtTime(1.0, now + T * 0.5);
     gain.gain.exponentialRampToValueAtTime(0.2, now + T * 0.85);
     gain.gain.exponentialRampToValueAtTime(0.01, now + T);
 
@@ -655,7 +659,7 @@ main {
 
     // Override playTrainSound for export to route through recDest
     const originalPlayTrainSound = playTrainSound;
-    playTrainSound = function() {
+    playTrainSound = function(duration) {
       if (!trainSndBuffer || !audioCtx) return;
 
       const source = audioCtx.createBufferSource();
@@ -663,12 +667,12 @@ main {
 
       const gain = audioCtx.createGain();
       const now = audioCtx.currentTime;
-      const T = 3.5;
+      const T = duration + 0.5;
 
       gain.gain.setValueAtTime(0.01, now);
       gain.gain.exponentialRampToValueAtTime(0.8, now + 0.3);
-      gain.gain.exponentialRampToValueAtTime(1.0, now + T * 0.4);
-      gain.gain.setValueAtTime(1.0, now + T * 0.55);
+      gain.gain.exponentialRampToValueAtTime(1.0, now + T * 0.35);
+      gain.gain.setValueAtTime(1.0, now + T * 0.5);
       gain.gain.exponentialRampToValueAtTime(0.2, now + T * 0.85);
       gain.gain.exponentialRampToValueAtTime(0.01, now + T);
 
@@ -690,15 +694,13 @@ main {
     ];
     const combinedStream = new MediaStream(tracks);
 
-    // MediaRecorder — prefer MP4 (H.264+AAC) for broad device compatibility
+    // MediaRecorder — WebM is most reliable with captureStream, MP4 as bonus
     const codecCandidates = [
-      'video/mp4;codecs=avc1.64003E,mp4a.40.2',   // MP4 H.264 High + AAC
-      'video/mp4;codecs=avc1.42E01E,mp4a.40.2',   // MP4 H.264 Baseline + AAC
-      'video/mp4;codecs=avc1.64003E,opus',         // MP4 H.264 + Opus
-      'video/mp4',                                  // MP4 generic
-      'video/webm;codecs=vp9,opus',                // WebM fallback
+      'video/webm;codecs=vp9,opus',
       'video/webm;codecs=vp8,opus',
-      'video/webm'
+      'video/webm',
+      'video/mp4;codecs=avc1.64003E,mp4a.40.2',
+      'video/mp4'
     ];
     let mimeType = codecCandidates.find(c => MediaRecorder.isTypeSupported(c)) || 'video/webm';
 
@@ -745,7 +747,7 @@ main {
     video.addEventListener('seeked', function onSeeked() {
       video.removeEventListener('seeked', onSeeked);
 
-      recorder.start(100); // collect data every 100ms
+      recorder.start(); // no timeslice for cleaner output
 
       if (audioCtx.state === 'suspended') audioCtx.resume();
       video.play();
@@ -776,13 +778,13 @@ main {
       video.addEventListener('ended', function onEnd() {
         video.removeEventListener('ended', onEnd);
         cancelAnimationFrame(exportRaf);
-        // Small delay to capture last frames
+        // Delay to capture last frames
         setTimeout(() => {
           recorder.stop();
           isPlaying = false;
           resetTrainState();
           btnPlay.textContent = '\u25B6 再生';
-        }, 200);
+        }, 300);
       });
     });
   }
