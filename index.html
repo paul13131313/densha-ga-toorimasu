@@ -626,13 +626,21 @@ main {
     }
   })();
 
+  const CONVERT_API = 'https://densha-converter.vercel.app/api/convert';
+  const MAX_EXPORT_SEC = 10;
+
+  // On mobile/unsupported: disable export
+  if (!canExport) {
+    btnSave.textContent = '\u{1F4F1} 保存不可';
+  }
+
   btnSave.addEventListener('click', () => {
-    if (isSaving || !videoLoaded) return;
+    if (!videoLoaded) return;
     if (!canExport) {
-      setStatus('PCのChromeで保存してください');
-      alert('動画の保存はPCのChrome/Edgeブラウザで利用できます。\niOS Safari では現在この機能に対応していません。');
+      alert('この端末では動画の保存ができません。\nPCのChrome / Edgeで開いてお試しください。');
       return;
     }
+    if (isSaving) return;
     ensureAudioCtx();
     connectVideoAudio();
     startExport();
@@ -733,25 +741,9 @@ main {
       if (e.data.size > 0) chunks.push(e.data);
     };
 
-    recorder.onstop = () => {
+    recorder.onstop = async () => {
       const blob = new Blob(chunks, { type: mimeType });
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement('a');
       const ts = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
-      const ext = mimeType.startsWith('video/mp4') ? 'mp4' : 'webm';
-      a.download = `電車が通ります_${ts}.${ext}`;
-      a.href = url;
-      document.body.appendChild(a);
-      a.click();
-      document.body.removeChild(a);
-      setTimeout(() => URL.revokeObjectURL(url), 1000);
-
-      isSaving = false;
-      btnSave.disabled = false;
-      btnPlay.disabled = false;
-      progressBar.classList.add('hidden');
-      progressFill.style.width = '0%';
-      setStatus('saved!');
 
       // Restore original playTrainSound
       playTrainSound = originalPlayTrainSound;
@@ -759,7 +751,52 @@ main {
       // Cleanup audio routing
       try { analyser.disconnect(recDest); } catch (e) {}
       try { trainRecGain.disconnect(); } catch (e) {}
+
+      // If already MP4, download directly
+      if (mimeType.startsWith('video/mp4')) {
+        downloadBlob(blob, `電車が通ります_${ts}.mp4`);
+        finishExport('saved!');
+        return;
+      }
+
+      // WebM → MP4 server conversion
+      setStatus('MP4に変換中...');
+      try {
+        const resp = await fetch(CONVERT_API, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/octet-stream' },
+          body: blob
+        });
+        if (!resp.ok) throw new Error(`Server ${resp.status}`);
+        const mp4Blob = await resp.blob();
+        downloadBlob(mp4Blob, `電車が通ります_${ts}.mp4`);
+        finishExport('saved!');
+      } catch (err) {
+        console.warn('MP4 conversion failed, saving WebM:', err);
+        downloadBlob(blob, `電車が通ります_${ts}.webm`);
+        finishExport('saved (WebM)');
+      }
     };
+
+    function downloadBlob(blob, filename) {
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.download = filename;
+      a.href = url;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      setTimeout(() => URL.revokeObjectURL(url), 1000);
+    }
+
+    function finishExport(msg) {
+      isSaving = false;
+      btnSave.disabled = false;
+      btnPlay.disabled = false;
+      progressBar.classList.add('hidden');
+      progressFill.style.width = '0%';
+      setStatus(msg);
+    }
 
     // Seek to start, wait, then begin
     video.currentTime = 0;
@@ -771,12 +808,34 @@ main {
       if (audioCtx.state === 'suspended') audioCtx.resume();
       video.play();
       isPlaying = true;
-      setStatus('exporting...');
+      const exportDuration = Math.min(video.duration || MAX_EXPORT_SEC, MAX_EXPORT_SEC);
+      setStatus(`exporting... (最大${MAX_EXPORT_SEC}秒)`);
 
       // Export animation loop
       let exportRaf;
+      let exportStopped = false;
+
+      function stopExport() {
+        if (exportStopped) return;
+        exportStopped = true;
+        cancelAnimationFrame(exportRaf);
+        video.pause();
+        setTimeout(() => {
+          recorder.stop();
+          isPlaying = false;
+          resetTrainState();
+          btnPlay.textContent = '\u25B6 再生';
+        }, 300);
+      }
+
       function exportLoop() {
         exportRaf = requestAnimationFrame(exportLoop);
+
+        // 10-second limit
+        if (video.currentTime >= exportDuration) {
+          stopExport();
+          return;
+        }
 
         detectSpeech();
         drawTrain();
@@ -785,25 +844,16 @@ main {
         offCtx.drawImage(video, 0, 0, vw, vh);
         offCtx.drawImage(trainCanvas, 0, 0, vw, vh);
 
-        // Progress
-        if (video.duration) {
-          const pct = (video.currentTime / video.duration) * 100;
-          progressFill.style.width = pct + '%';
-        }
+        // Progress (based on export duration)
+        const pct = (video.currentTime / exportDuration) * 100;
+        progressFill.style.width = Math.min(pct, 100) + '%';
         updateTime();
       }
       exportLoop();
 
       video.addEventListener('ended', function onEnd() {
         video.removeEventListener('ended', onEnd);
-        cancelAnimationFrame(exportRaf);
-        // Delay to capture last frames
-        setTimeout(() => {
-          recorder.stop();
-          isPlaying = false;
-          resetTrainState();
-          btnPlay.textContent = '\u25B6 再生';
-        }, 300);
+        stopExport();
       });
     });
   }
