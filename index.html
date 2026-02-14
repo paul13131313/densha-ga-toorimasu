@@ -1,0 +1,720 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>電車が通ります。</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=Zen+Kaku+Gothic+New:wght@400;700;900&display=swap" rel="stylesheet">
+<style>
+*, *::before, *::after {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+body {
+  background: #050505;
+  color: #ccc;
+  font-family: 'Zen Kaku Gothic New', sans-serif;
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  overflow-x: hidden;
+}
+
+header {
+  text-align: center;
+  padding: 48px 20px 24px;
+}
+
+header h1 {
+  font-size: 2rem;
+  font-weight: 900;
+  color: #e8e8e8;
+  letter-spacing: 0.05em;
+}
+
+header h1 .dot {
+  color: #c82020;
+}
+
+header p.sub {
+  font-family: 'DM Mono', monospace;
+  font-size: 0.75rem;
+  color: #555;
+  margin-top: 8px;
+  letter-spacing: 0.04em;
+}
+
+main {
+  width: 100%;
+  max-width: 960px;
+  padding: 0 20px 60px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+
+.stage {
+  position: relative;
+  width: 100%;
+  aspect-ratio: 16 / 9;
+  background: #0a0a0a;
+  border: 1px solid #1a1a1a;
+  border-radius: 4px;
+  overflow: hidden;
+  cursor: pointer;
+}
+
+.stage video {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  background: #000;
+}
+
+.stage canvas {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+}
+
+.drop-zone {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  border: 2px dashed #222;
+  border-radius: 4px;
+  transition: border-color 0.2s, background 0.2s;
+  z-index: 10;
+}
+
+.drop-zone.drag-over {
+  border-color: #c82020;
+  background: rgba(200, 32, 32, 0.04);
+}
+
+.drop-zone.hidden {
+  display: none;
+}
+
+.drop-zone-icon {
+  font-size: 2.5rem;
+  color: #333;
+  line-height: 1;
+}
+
+.drop-zone-text {
+  font-family: 'DM Mono', monospace;
+  font-size: 0.8rem;
+  color: #444;
+}
+
+.drop-zone input[type="file"] {
+  position: absolute;
+  inset: 0;
+  opacity: 0;
+  cursor: pointer;
+}
+
+.controls {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  margin-top: 16px;
+  width: 100%;
+}
+
+.controls button {
+  font-family: 'Zen Kaku Gothic New', sans-serif;
+  font-size: 0.85rem;
+  font-weight: 700;
+  color: #ddd;
+  background: #161616;
+  border: 1px solid #2a2a2a;
+  border-radius: 4px;
+  padding: 10px 22px;
+  cursor: pointer;
+  transition: background 0.15s, border-color 0.15s;
+  white-space: nowrap;
+}
+
+.controls button:hover {
+  background: #1e1e1e;
+  border-color: #3a3a3a;
+}
+
+.controls button:active {
+  background: #111;
+}
+
+.controls button:disabled {
+  opacity: 0.3;
+  cursor: not-allowed;
+}
+
+.controls button:disabled:hover {
+  background: #161616;
+  border-color: #2a2a2a;
+}
+
+.time {
+  font-family: 'DM Mono', monospace;
+  font-size: 0.75rem;
+  color: #444;
+  margin-left: auto;
+}
+
+.status {
+  font-family: 'DM Mono', monospace;
+  font-size: 0.7rem;
+  color: #333;
+  margin-top: 10px;
+  height: 1.2em;
+  text-align: center;
+}
+
+.progress-bar {
+  width: 100%;
+  height: 3px;
+  background: #1a1a1a;
+  border-radius: 2px;
+  margin-top: 12px;
+  overflow: hidden;
+}
+
+.progress-bar.hidden {
+  visibility: hidden;
+}
+
+.progress-bar-fill {
+  height: 100%;
+  width: 0%;
+  background: #c82020;
+  border-radius: 2px;
+  transition: width 0.3s;
+}
+</style>
+</head>
+<body>
+
+<header>
+  <h1>電車が通ります<span class="dot">。</span></h1>
+  <p class="sub">speech detected → train dispatched</p>
+</header>
+
+<main>
+  <div class="stage" id="stage">
+    <video id="video" playsinline></video>
+    <canvas id="trainCanvas"></canvas>
+    <div class="drop-zone" id="dropZone">
+      <div class="drop-zone-icon">&#9655;</div>
+      <div class="drop-zone-text">drop video here</div>
+      <input type="file" id="fileInput" accept="video/*">
+    </div>
+  </div>
+
+  <div class="controls">
+    <button id="btnPlay" disabled>&#9654; 再生</button>
+    <button id="btnSave" disabled>&#11015; 動画を保存</button>
+    <span class="time" id="timeDisplay">00:00 / 00:00</span>
+  </div>
+
+  <div class="progress-bar hidden" id="progressBar">
+    <div class="progress-bar-fill" id="progressFill"></div>
+  </div>
+
+  <div class="status" id="status"></div>
+</main>
+
+<script>
+(() => {
+  // --- DOM ---
+  const video = document.getElementById('video');
+  const trainCanvas = document.getElementById('trainCanvas');
+  const ctx = trainCanvas.getContext('2d');
+  const dropZone = document.getElementById('dropZone');
+  const fileInput = document.getElementById('fileInput');
+  const btnPlay = document.getElementById('btnPlay');
+  const btnSave = document.getElementById('btnSave');
+  const timeDisplay = document.getElementById('timeDisplay');
+  const progressBar = document.getElementById('progressBar');
+  const progressFill = document.getElementById('progressFill');
+  const statusEl = document.getElementById('status');
+
+  // --- State ---
+  let audioCtx = null;
+  let analyser = null;
+  let trainImg = null;
+  let trainSndBuffer = null;
+  let videoLoaded = false;
+  let isPlaying = false;
+  let isSaving = false;
+
+  // Train state
+  let trainActive = false;
+  let trainX = 0;
+  let trainSpeed = 0;
+  let trainDrawW = 0;
+  let trainDrawH = 0;
+  let trainStartTime = 0;
+  const TRAIN_DURATION = 3.0; // seconds to cross
+
+  // Speech detection
+  let speechAccumulator = 0;
+  let cooldownUntil = 0;
+  const SPEECH_THRESHOLD = 0.04;
+  const SPEECH_HOLD = 0.3;
+  const COOLDOWN = 2.2;
+
+  // Current train sound
+  let currentTrainGain = null;
+  let currentTrainSource = null;
+
+  // Animation
+  let rafId = null;
+
+  // --- Load Assets ---
+  trainImg = new Image();
+  trainImg.src = 'assets/train-photo.png';
+  trainImg.onload = () => setStatus('train image loaded');
+
+  // --- Audio Setup ---
+  function ensureAudioCtx() {
+    if (audioCtx) return;
+    audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+
+    // Load train sound
+    fetch('assets/train-sound.wav')
+      .then(r => r.arrayBuffer())
+      .then(buf => audioCtx.decodeAudioData(buf))
+      .then(decoded => {
+        trainSndBuffer = decoded;
+        setStatus('assets ready');
+      })
+      .catch(() => setStatus('train sound not found'));
+  }
+
+  // Connect video to analyser
+  let mediaSourceConnected = false;
+  function connectVideoAudio() {
+    if (mediaSourceConnected || !audioCtx) return;
+    try {
+      const source = audioCtx.createMediaElementSource(video);
+      analyser = audioCtx.createAnalyser();
+      analyser.fftSize = 2048;
+      source.connect(analyser);
+      analyser.connect(audioCtx.destination);
+      mediaSourceConnected = true;
+    } catch (e) {
+      // already connected
+    }
+  }
+
+  // --- File Input ---
+  fileInput.addEventListener('change', (e) => {
+    if (e.target.files.length) loadVideo(e.target.files[0]);
+  });
+
+  dropZone.addEventListener('dragover', (e) => {
+    e.preventDefault();
+    dropZone.classList.add('drag-over');
+  });
+  dropZone.addEventListener('dragleave', () => {
+    dropZone.classList.remove('drag-over');
+  });
+  dropZone.addEventListener('drop', (e) => {
+    e.preventDefault();
+    dropZone.classList.remove('drag-over');
+    if (e.dataTransfer.files.length) loadVideo(e.dataTransfer.files[0]);
+  });
+
+  function loadVideo(file) {
+    ensureAudioCtx();
+    const url = URL.createObjectURL(file);
+    video.src = url;
+    video.load();
+    video.addEventListener('loadedmetadata', () => {
+      videoLoaded = true;
+      dropZone.classList.add('hidden');
+      btnPlay.disabled = false;
+      btnSave.disabled = false;
+
+      // Size canvas to video's native resolution
+      trainCanvas.width = video.videoWidth;
+      trainCanvas.height = video.videoHeight;
+
+      updateTime();
+      setStatus('ready');
+      connectVideoAudio();
+    }, { once: true });
+  }
+
+  // --- Playback ---
+  btnPlay.addEventListener('click', () => {
+    ensureAudioCtx();
+    connectVideoAudio();
+    togglePlay();
+  });
+
+  function togglePlay() {
+    if (!videoLoaded) return;
+    if (isPlaying) {
+      pause();
+    } else {
+      play();
+    }
+  }
+
+  function play() {
+    if (audioCtx && audioCtx.state === 'suspended') audioCtx.resume();
+    video.play();
+    isPlaying = true;
+    btnPlay.textContent = '⏸ 停止';
+    setStatus('playing...');
+    startLoop();
+  }
+
+  function pause() {
+    video.pause();
+    isPlaying = false;
+    btnPlay.textContent = '▶ 再生';
+    setStatus('paused');
+    stopLoop();
+  }
+
+  video.addEventListener('ended', () => {
+    isPlaying = false;
+    btnPlay.textContent = '▶ 再生';
+    setStatus('finished');
+    stopLoop();
+    resetTrainState();
+  });
+
+  // --- Animation Loop ---
+  function startLoop() {
+    if (rafId) return;
+    function loop() {
+      rafId = requestAnimationFrame(loop);
+      update();
+    }
+    loop();
+  }
+
+  function stopLoop() {
+    if (rafId) {
+      cancelAnimationFrame(rafId);
+      rafId = null;
+    }
+  }
+
+  function update() {
+    updateTime();
+    detectSpeech();
+    drawTrain();
+  }
+
+  // --- Time Display ---
+  function updateTime() {
+    const cur = formatTime(video.currentTime || 0);
+    const dur = formatTime(video.duration || 0);
+    timeDisplay.textContent = `${cur} / ${dur}`;
+  }
+
+  function formatTime(s) {
+    if (!isFinite(s)) return '00:00';
+    const m = Math.floor(s / 60);
+    const sec = Math.floor(s % 60);
+    return String(m).padStart(2, '0') + ':' + String(sec).padStart(2, '0');
+  }
+
+  // --- Speech Detection ---
+  function detectSpeech() {
+    if (!analyser || trainActive || !isPlaying) return;
+    if (video.currentTime < cooldownUntil) return;
+
+    const freqData = new Uint8Array(analyser.frequencyBinCount);
+    analyser.getByteFrequencyData(freqData);
+
+    // Sample rate
+    const sampleRate = audioCtx.sampleRate;
+    const binSize = sampleRate / analyser.fftSize;
+
+    // Voice band: 250Hz - 3500Hz
+    const loIdx = Math.floor(250 / binSize);
+    const hiIdx = Math.ceil(3500 / binSize);
+
+    let sum = 0;
+    let count = 0;
+    for (let i = loIdx; i <= hiIdx && i < freqData.length; i++) {
+      sum += freqData[i] / 255;
+      count++;
+    }
+    const level = count > 0 ? sum / count : 0;
+
+    if (level > SPEECH_THRESHOLD) {
+      speechAccumulator += 1 / 60;
+      if (speechAccumulator >= SPEECH_HOLD) {
+        triggerTrain();
+        speechAccumulator = 0;
+      }
+    } else {
+      speechAccumulator *= 0.9;
+    }
+  }
+
+  // --- Train ---
+  function triggerTrain() {
+    if (!trainImg.complete) return;
+    trainActive = true;
+    trainStartTime = performance.now() / 1000;
+
+    const cw = trainCanvas.width;
+    const ch = trainCanvas.height;
+
+    // Scale train image to ~72% of canvas height
+    const scale = (ch * 0.72) / trainImg.naturalHeight;
+    trainDrawW = trainImg.naturalWidth * scale;
+    trainDrawH = trainImg.naturalHeight * scale;
+
+    // Start off-screen right
+    trainX = cw + 50;
+
+    // Speed: cross entire canvas + train width in TRAIN_DURATION
+    trainSpeed = (cw + trainDrawW + 100) / (TRAIN_DURATION * 60);
+
+    // Lower video volume
+    video.volume = 0.02;
+
+    // Play train sound
+    playTrainSound();
+
+    setStatus('train passing...');
+  }
+
+  function playTrainSound() {
+    if (!trainSndBuffer || !audioCtx) return;
+
+    const source = audioCtx.createBufferSource();
+    source.buffer = trainSndBuffer;
+
+    const gain = audioCtx.createGain();
+    const now = audioCtx.currentTime;
+    const T = 3.5;
+
+    gain.gain.setValueAtTime(0.01, now);
+    gain.gain.exponentialRampToValueAtTime(0.8, now + 0.3);
+    gain.gain.exponentialRampToValueAtTime(1.0, now + T * 0.4);
+    gain.gain.setValueAtTime(1.0, now + T * 0.55);
+    gain.gain.exponentialRampToValueAtTime(0.2, now + T * 0.85);
+    gain.gain.exponentialRampToValueAtTime(0.01, now + T);
+
+    source.connect(gain).connect(audioCtx.destination);
+    source.start(now, 9.5);
+    source.stop(now + T);
+
+    currentTrainGain = gain;
+    currentTrainSource = source;
+  }
+
+  function drawTrain() {
+    ctx.clearRect(0, 0, trainCanvas.width, trainCanvas.height);
+    if (!trainActive || !trainImg.complete) return;
+
+    const cw = trainCanvas.width;
+    const ch = trainCanvas.height;
+
+    trainX -= trainSpeed;
+
+    // Vertical position: slightly above center
+    const drawY = (ch - trainDrawH) * 0.42;
+
+    // Shadow
+    ctx.save();
+    ctx.beginPath();
+    const shadowCx = trainX + trainDrawW / 2;
+    const shadowCy = drawY + trainDrawH + 8;
+    const shadowRx = trainDrawW * 0.45;
+    const shadowRy = 12;
+    ctx.ellipse(shadowCx, shadowCy, shadowRx, shadowRy, 0, 0, Math.PI * 2);
+    ctx.fillStyle = 'rgba(0, 0, 0, 0.35)';
+    ctx.fill();
+    ctx.restore();
+
+    // Draw train
+    ctx.drawImage(trainImg, trainX, drawY, trainDrawW, trainDrawH);
+
+    // Check if train has fully exited left
+    if (trainX + trainDrawW < -50) {
+      trainActive = false;
+      video.volume = 1;
+      cooldownUntil = video.currentTime + COOLDOWN;
+      setStatus('playing...');
+    }
+  }
+
+  function resetTrainState() {
+    trainActive = false;
+    speechAccumulator = 0;
+    cooldownUntil = 0;
+    video.volume = 1;
+    ctx.clearRect(0, 0, trainCanvas.width, trainCanvas.height);
+  }
+
+  // --- Save / Export ---
+  btnSave.addEventListener('click', () => {
+    if (isSaving || !videoLoaded) return;
+    ensureAudioCtx();
+    connectVideoAudio();
+    startExport();
+  });
+
+  function startExport() {
+    isSaving = true;
+    btnSave.disabled = true;
+    btnPlay.disabled = true;
+    progressBar.classList.remove('hidden');
+    setStatus('exporting...');
+
+    // Reset video
+    video.currentTime = 0;
+    resetTrainState();
+
+    const vw = video.videoWidth;
+    const vh = video.videoHeight;
+
+    // Offscreen canvas for compositing
+    const offCanvas = document.createElement('canvas');
+    offCanvas.width = vw;
+    offCanvas.height = vh;
+    const offCtx = offCanvas.getContext('2d');
+
+    // Capture stream from offscreen canvas
+    const canvasStream = offCanvas.captureStream(30);
+
+    // Audio destination for recording
+    const dest = audioCtx.createMediaStreamDestination();
+
+    // Connect video audio to recording destination
+    // We need a second source; re-use analyser output
+    if (analyser) {
+      analyser.connect(dest);
+    }
+
+    // Merge audio + video streams
+    const tracks = [
+      ...canvasStream.getVideoTracks(),
+      ...dest.stream.getAudioTracks()
+    ];
+    const combinedStream = new MediaStream(tracks);
+
+    // MediaRecorder
+    let mimeType = 'video/webm;codecs=vp9,opus';
+    if (!MediaRecorder.isTypeSupported(mimeType)) {
+      mimeType = 'video/webm;codecs=vp8,opus';
+      if (!MediaRecorder.isTypeSupported(mimeType)) {
+        mimeType = 'video/webm';
+      }
+    }
+
+    const recorder = new MediaRecorder(combinedStream, {
+      mimeType,
+      videoBitsPerSecond: 5000000
+    });
+
+    const chunks = [];
+    recorder.ondataavailable = (e) => {
+      if (e.data.size > 0) chunks.push(e.data);
+    };
+
+    recorder.onstop = () => {
+      const blob = new Blob(chunks, { type: mimeType });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      const ts = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
+      a.download = `電車が通ります_${ts}.webm`;
+      a.href = url;
+      a.click();
+      URL.revokeObjectURL(url);
+
+      isSaving = false;
+      btnSave.disabled = false;
+      btnPlay.disabled = false;
+      progressBar.classList.add('hidden');
+      progressFill.style.width = '0%';
+      setStatus('saved');
+
+      // Disconnect analyser from dest
+      try { analyser.disconnect(dest); } catch (e) {}
+    };
+
+    recorder.start();
+
+    // Play video for real-time capture
+    if (audioCtx.state === 'suspended') audioCtx.resume();
+    video.play();
+    isPlaying = true;
+
+    // Export animation loop
+    let exportRaf;
+    function exportLoop() {
+      exportRaf = requestAnimationFrame(exportLoop);
+
+      // Speech detection + train drawing happen via main update
+      detectSpeech();
+      drawTrain();
+
+      // Composite: video + train overlay
+      offCtx.drawImage(video, 0, 0, vw, vh);
+      offCtx.drawImage(trainCanvas, 0, 0, vw, vh);
+
+      // Progress
+      if (video.duration) {
+        const pct = (video.currentTime / video.duration) * 100;
+        progressFill.style.width = pct + '%';
+      }
+
+      updateTime();
+    }
+    exportLoop();
+
+    video.addEventListener('ended', function onEnd() {
+      video.removeEventListener('ended', onEnd);
+      cancelAnimationFrame(exportRaf);
+      recorder.stop();
+      isPlaying = false;
+      resetTrainState();
+      btnPlay.textContent = '▶ 再生';
+    });
+  }
+
+  // --- Keyboard Shortcuts ---
+  document.addEventListener('keydown', (e) => {
+    if (e.code === 'Space' && videoLoaded && !isSaving) {
+      e.preventDefault();
+      togglePlay();
+    }
+  });
+
+  // --- Status ---
+  function setStatus(msg) {
+    statusEl.textContent = msg;
+  }
+
+  setStatus('drop a video to start');
+})();
+</script>
+
+</body>
+</html>
