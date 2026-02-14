@@ -690,14 +690,17 @@ main {
     ];
     const combinedStream = new MediaStream(tracks);
 
-    // MediaRecorder
-    let mimeType = 'video/webm;codecs=vp9,opus';
-    if (!MediaRecorder.isTypeSupported(mimeType)) {
-      mimeType = 'video/webm;codecs=vp8,opus';
-      if (!MediaRecorder.isTypeSupported(mimeType)) {
-        mimeType = 'video/webm';
-      }
-    }
+    // MediaRecorder — prefer MP4 (H.264+AAC) for broad device compatibility
+    const codecCandidates = [
+      'video/mp4;codecs=avc1.64003E,mp4a.40.2',   // MP4 H.264 High + AAC
+      'video/mp4;codecs=avc1.42E01E,mp4a.40.2',   // MP4 H.264 Baseline + AAC
+      'video/mp4;codecs=avc1.64003E,opus',         // MP4 H.264 + Opus
+      'video/mp4',                                  // MP4 generic
+      'video/webm;codecs=vp9,opus',                // WebM fallback
+      'video/webm;codecs=vp8,opus',
+      'video/webm'
+    ];
+    let mimeType = codecCandidates.find(c => MediaRecorder.isTypeSupported(c)) || 'video/webm';
 
     const recorder = new MediaRecorder(combinedStream, {
       mimeType,
@@ -714,7 +717,8 @@ main {
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
       const ts = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
-      a.download = `電車が通ります_${ts}.webm`;
+      const ext = mimeType.startsWith('video/mp4') ? 'mp4' : 'webm';
+      a.download = `電車が通ります_${ts}.${ext}`;
       a.href = url;
       document.body.appendChild(a);
       a.click();
