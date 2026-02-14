@@ -614,8 +614,25 @@ main {
   }
 
   // --- Save / Export ---
+  // Check if canvas captureStream is available (not supported on iOS Safari)
+  const canExport = (() => {
+    try {
+      const testCanvas = document.createElement('canvas');
+      testCanvas.width = testCanvas.height = 1;
+      const stream = testCanvas.captureStream(1);
+      return stream && stream.getVideoTracks().length > 0;
+    } catch (e) {
+      return false;
+    }
+  })();
+
   btnSave.addEventListener('click', () => {
     if (isSaving || !videoLoaded) return;
+    if (!canExport) {
+      setStatus('PCのChromeで保存してください');
+      alert('動画の保存はPCのChrome/Edgeブラウザで利用できます。\niOS Safari では現在この機能に対応していません。');
+      return;
+    }
     ensureAudioCtx();
     connectVideoAudio();
     startExport();
