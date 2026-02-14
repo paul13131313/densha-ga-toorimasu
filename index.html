@@ -70,11 +70,17 @@ main {
   align-items: center;
 }
 
+.stage-wrapper {
+  width: 100%;
+  display: flex;
+  justify-content: center;
+}
+
 .stage {
   position: relative;
   width: 100%;
-  aspect-ratio: 16 / 9;
-  background: #0a0a0a;
+  max-width: 960px;
+  background: #000;
   border: 1px solid #1a1a1a;
   border-radius: 4px;
   overflow: hidden;
@@ -84,9 +90,7 @@ main {
 .stage video {
   display: block;
   width: 100%;
-  height: 100%;
-  object-fit: contain;
-  background: #000;
+  height: auto;
 }
 
 .stage canvas {
@@ -110,6 +114,7 @@ main {
   border-radius: 4px;
   transition: border-color 0.2s, background 0.2s;
   z-index: 10;
+  min-height: 300px;
 }
 
 .drop-zone.drag-over {
@@ -227,13 +232,15 @@ main {
 </header>
 
 <main>
-  <div class="stage" id="stage">
-    <video id="video" playsinline></video>
-    <canvas id="trainCanvas"></canvas>
-    <div class="drop-zone" id="dropZone">
-      <div class="drop-zone-icon">&#9655;</div>
-      <div class="drop-zone-text">drop video here</div>
-      <input type="file" id="fileInput" accept="video/*">
+  <div class="stage-wrapper">
+    <div class="stage" id="stage">
+      <video id="video" playsinline></video>
+      <canvas id="trainCanvas"></canvas>
+      <div class="drop-zone" id="dropZone">
+        <div class="drop-zone-icon">&#9655;</div>
+        <div class="drop-zone-text">drop video here</div>
+        <input type="file" id="fileInput" accept="video/*">
+      </div>
     </div>
   </div>
 
@@ -256,6 +263,7 @@ main {
   const video = document.getElementById('video');
   const trainCanvas = document.getElementById('trainCanvas');
   const ctx = trainCanvas.getContext('2d');
+  const stage = document.getElementById('stage');
   const dropZone = document.getElementById('dropZone');
   const fileInput = document.getElementById('fileInput');
   const btnPlay = document.getElementById('btnPlay');
@@ -268,6 +276,7 @@ main {
   // --- State ---
   let audioCtx = null;
   let analyser = null;
+  let mediaElementSource = null;
   let trainImg = null;
   let trainSndBuffer = null;
   let videoLoaded = false;
@@ -278,10 +287,10 @@ main {
   let trainActive = false;
   let trainX = 0;
   let trainSpeed = 0;
-  let trainDrawW = 0;
-  let trainDrawH = 0;
-  let trainStartTime = 0;
-  const TRAIN_DURATION = 3.0; // seconds to cross
+  let trainUnitW = 0;   // single car width on canvas
+  let trainUnitH = 0;   // single car height on canvas
+  let trainTotalW = 0;  // total tiled width
+  const TRAIN_DURATION = 3.0;
 
   // Speech detection
   let speechAccumulator = 0;
@@ -290,7 +299,7 @@ main {
   const SPEECH_HOLD = 0.3;
   const COOLDOWN = 2.2;
 
-  // Current train sound
+  // Current train sound nodes
   let currentTrainGain = null;
   let currentTrainSource = null;
 
@@ -307,7 +316,6 @@ main {
     if (audioCtx) return;
     audioCtx = new (window.AudioContext || window.webkitAudioContext)();
 
-    // Load train sound
     fetch('assets/train-sound.wav')
       .then(r => r.arrayBuffer())
       .then(buf => audioCtx.decodeAudioData(buf))
@@ -318,15 +326,14 @@ main {
       .catch(() => setStatus('train sound not found'));
   }
 
-  // Connect video to analyser
   let mediaSourceConnected = false;
   function connectVideoAudio() {
     if (mediaSourceConnected || !audioCtx) return;
     try {
-      const source = audioCtx.createMediaElementSource(video);
+      mediaElementSource = audioCtx.createMediaElementSource(video);
       analyser = audioCtx.createAnalyser();
       analyser.fftSize = 2048;
-      source.connect(analyser);
+      mediaElementSource.connect(analyser);
       analyser.connect(audioCtx.destination);
       mediaSourceConnected = true;
     } catch (e) {
@@ -363,7 +370,7 @@ main {
       btnPlay.disabled = false;
       btnSave.disabled = false;
 
-      // Size canvas to video's native resolution
+      // Canvas matches video native resolution
       trainCanvas.width = video.videoWidth;
       trainCanvas.height = video.videoHeight;
 
@@ -393,7 +400,7 @@ main {
     if (audioCtx && audioCtx.state === 'suspended') audioCtx.resume();
     video.play();
     isPlaying = true;
-    btnPlay.textContent = '⏸ 停止';
+    btnPlay.textContent = '\u23F8 停止';
     setStatus('playing...');
     startLoop();
   }
@@ -401,14 +408,15 @@ main {
   function pause() {
     video.pause();
     isPlaying = false;
-    btnPlay.textContent = '▶ 再生';
+    btnPlay.textContent = '\u25B6 再生';
     setStatus('paused');
     stopLoop();
   }
 
   video.addEventListener('ended', () => {
+    if (isSaving) return; // handled by export
     isPlaying = false;
-    btnPlay.textContent = '▶ 再生';
+    btnPlay.textContent = '\u25B6 再生';
     setStatus('finished');
     stopLoop();
     resetTrainState();
@@ -459,11 +467,8 @@ main {
     const freqData = new Uint8Array(analyser.frequencyBinCount);
     analyser.getByteFrequencyData(freqData);
 
-    // Sample rate
     const sampleRate = audioCtx.sampleRate;
     const binSize = sampleRate / analyser.fftSize;
-
-    // Voice band: 250Hz - 3500Hz
     const loIdx = Math.floor(250 / binSize);
     const hiIdx = Math.ceil(3500 / binSize);
 
@@ -486,25 +491,28 @@ main {
     }
   }
 
-  // --- Train ---
+  // --- Train (tiled) ---
   function triggerTrain() {
     if (!trainImg.complete) return;
     trainActive = true;
-    trainStartTime = performance.now() / 1000;
 
     const cw = trainCanvas.width;
     const ch = trainCanvas.height;
 
-    // Scale train image to ~72% of canvas height
-    const scale = (ch * 0.72) / trainImg.naturalHeight;
-    trainDrawW = trainImg.naturalWidth * scale;
-    trainDrawH = trainImg.naturalHeight * scale;
+    // Scale single car to ~65% of canvas height
+    const scale = (ch * 0.65) / trainImg.naturalHeight;
+    trainUnitW = trainImg.naturalWidth * scale;
+    trainUnitH = trainImg.naturalHeight * scale;
+
+    // Tile: repeat cars so total width >= canvasWidth + 2 cars margin
+    const carsNeeded = Math.ceil((cw + trainUnitW * 2) / trainUnitW) + 1;
+    trainTotalW = carsNeeded * trainUnitW;
 
     // Start off-screen right
-    trainX = cw + 50;
+    trainX = cw + trainUnitW;
 
-    // Speed: cross entire canvas + train width in TRAIN_DURATION
-    trainSpeed = (cw + trainDrawW + 100) / (TRAIN_DURATION * 60);
+    // Speed: whole train passes in TRAIN_DURATION
+    trainSpeed = (cw + trainTotalW) / (TRAIN_DURATION * 60);
 
     // Lower video volume
     video.volume = 0.02;
@@ -550,25 +558,42 @@ main {
     trainX -= trainSpeed;
 
     // Vertical position: slightly above center
-    const drawY = (ch - trainDrawH) * 0.42;
+    const drawY = (ch - trainUnitH) * 0.42;
 
-    // Shadow
+    // Draw shadow under entire visible train area
     ctx.save();
-    ctx.beginPath();
-    const shadowCx = trainX + trainDrawW / 2;
-    const shadowCy = drawY + trainDrawH + 8;
-    const shadowRx = trainDrawW * 0.45;
-    const shadowRy = 12;
-    ctx.ellipse(shadowCx, shadowCy, shadowRx, shadowRy, 0, 0, Math.PI * 2);
-    ctx.fillStyle = 'rgba(0, 0, 0, 0.35)';
-    ctx.fill();
+    const visibleLeft = Math.max(0, trainX);
+    const visibleRight = Math.min(cw, trainX + trainTotalW);
+    if (visibleRight > visibleLeft) {
+      const shadowCx = (visibleLeft + visibleRight) / 2;
+      const shadowCy = drawY + trainUnitH + 8;
+      const shadowRx = (visibleRight - visibleLeft) * 0.48;
+      const shadowRy = Math.min(14, ch * 0.015);
+      ctx.beginPath();
+      ctx.ellipse(shadowCx, shadowCy, shadowRx, shadowRy, 0, 0, Math.PI * 2);
+      ctx.fillStyle = 'rgba(0, 0, 0, 0.3)';
+      ctx.fill();
+    }
     ctx.restore();
 
-    // Draw train
-    ctx.drawImage(trainImg, trainX, drawY, trainDrawW, trainDrawH);
+    // Draw tiled train cars
+    ctx.save();
+    ctx.beginPath();
+    ctx.rect(0, 0, cw, ch);
+    ctx.clip();
 
-    // Check if train has fully exited left
-    if (trainX + trainDrawW < -50) {
+    const carsNeeded = Math.ceil(trainTotalW / trainUnitW);
+    for (let i = 0; i < carsNeeded; i++) {
+      const x = trainX + i * trainUnitW;
+      // Only draw if visible
+      if (x + trainUnitW > 0 && x < cw) {
+        ctx.drawImage(trainImg, x, drawY, trainUnitW, trainUnitH);
+      }
+    }
+    ctx.restore();
+
+    // Check if entire train has exited left
+    if (trainX + trainTotalW < -10) {
       trainActive = false;
       video.volume = 1;
       cooldownUntil = video.currentTime + COOLDOWN;
@@ -597,10 +622,10 @@ main {
     btnSave.disabled = true;
     btnPlay.disabled = true;
     progressBar.classList.remove('hidden');
-    setStatus('exporting...');
+    progressFill.style.width = '0%';
+    setStatus('preparing export...');
 
-    // Reset video
-    video.currentTime = 0;
+    // Reset
     resetTrainState();
 
     const vw = video.videoWidth;
@@ -615,19 +640,53 @@ main {
     // Capture stream from offscreen canvas
     const canvasStream = offCanvas.captureStream(30);
 
-    // Audio destination for recording
-    const dest = audioCtx.createMediaStreamDestination();
+    // Audio: create a mixing destination for recording
+    const recDest = audioCtx.createMediaStreamDestination();
 
-    // Connect video audio to recording destination
-    // We need a second source; re-use analyser output
+    // Route video audio (via analyser) to recording destination
     if (analyser) {
-      analyser.connect(dest);
+      analyser.connect(recDest);
     }
+
+    // Create a separate gain node for train sound in recording
+    const trainRecGain = audioCtx.createGain();
+    trainRecGain.connect(recDest);
+    trainRecGain.connect(audioCtx.destination);
+
+    // Override playTrainSound for export to route through recDest
+    const originalPlayTrainSound = playTrainSound;
+    playTrainSound = function() {
+      if (!trainSndBuffer || !audioCtx) return;
+
+      const source = audioCtx.createBufferSource();
+      source.buffer = trainSndBuffer;
+
+      const gain = audioCtx.createGain();
+      const now = audioCtx.currentTime;
+      const T = 3.5;
+
+      gain.gain.setValueAtTime(0.01, now);
+      gain.gain.exponentialRampToValueAtTime(0.8, now + 0.3);
+      gain.gain.exponentialRampToValueAtTime(1.0, now + T * 0.4);
+      gain.gain.setValueAtTime(1.0, now + T * 0.55);
+      gain.gain.exponentialRampToValueAtTime(0.2, now + T * 0.85);
+      gain.gain.exponentialRampToValueAtTime(0.01, now + T);
+
+      // Connect to both speakers and recording
+      source.connect(gain);
+      gain.connect(trainRecGain);
+
+      source.start(now, 9.5);
+      source.stop(now + T);
+
+      currentTrainGain = gain;
+      currentTrainSource = source;
+    };
 
     // Merge audio + video streams
     const tracks = [
       ...canvasStream.getVideoTracks(),
-      ...dest.stream.getAudioTracks()
+      ...recDest.stream.getAudioTracks()
     ];
     const combinedStream = new MediaStream(tracks);
 
@@ -657,57 +716,70 @@ main {
       const ts = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
       a.download = `電車が通ります_${ts}.webm`;
       a.href = url;
+      document.body.appendChild(a);
       a.click();
-      URL.revokeObjectURL(url);
+      document.body.removeChild(a);
+      setTimeout(() => URL.revokeObjectURL(url), 1000);
 
       isSaving = false;
       btnSave.disabled = false;
       btnPlay.disabled = false;
       progressBar.classList.add('hidden');
       progressFill.style.width = '0%';
-      setStatus('saved');
+      setStatus('saved!');
 
-      // Disconnect analyser from dest
-      try { analyser.disconnect(dest); } catch (e) {}
+      // Restore original playTrainSound
+      playTrainSound = originalPlayTrainSound;
+
+      // Cleanup audio routing
+      try { analyser.disconnect(recDest); } catch (e) {}
+      try { trainRecGain.disconnect(); } catch (e) {}
     };
 
-    recorder.start();
+    // Seek to start, wait, then begin
+    video.currentTime = 0;
+    video.addEventListener('seeked', function onSeeked() {
+      video.removeEventListener('seeked', onSeeked);
 
-    // Play video for real-time capture
-    if (audioCtx.state === 'suspended') audioCtx.resume();
-    video.play();
-    isPlaying = true;
+      recorder.start(100); // collect data every 100ms
 
-    // Export animation loop
-    let exportRaf;
-    function exportLoop() {
-      exportRaf = requestAnimationFrame(exportLoop);
+      if (audioCtx.state === 'suspended') audioCtx.resume();
+      video.play();
+      isPlaying = true;
+      setStatus('exporting...');
 
-      // Speech detection + train drawing happen via main update
-      detectSpeech();
-      drawTrain();
+      // Export animation loop
+      let exportRaf;
+      function exportLoop() {
+        exportRaf = requestAnimationFrame(exportLoop);
 
-      // Composite: video + train overlay
-      offCtx.drawImage(video, 0, 0, vw, vh);
-      offCtx.drawImage(trainCanvas, 0, 0, vw, vh);
+        detectSpeech();
+        drawTrain();
 
-      // Progress
-      if (video.duration) {
-        const pct = (video.currentTime / video.duration) * 100;
-        progressFill.style.width = pct + '%';
+        // Composite: video frame + train overlay
+        offCtx.drawImage(video, 0, 0, vw, vh);
+        offCtx.drawImage(trainCanvas, 0, 0, vw, vh);
+
+        // Progress
+        if (video.duration) {
+          const pct = (video.currentTime / video.duration) * 100;
+          progressFill.style.width = pct + '%';
+        }
+        updateTime();
       }
+      exportLoop();
 
-      updateTime();
-    }
-    exportLoop();
-
-    video.addEventListener('ended', function onEnd() {
-      video.removeEventListener('ended', onEnd);
-      cancelAnimationFrame(exportRaf);
-      recorder.stop();
-      isPlaying = false;
-      resetTrainState();
-      btnPlay.textContent = '▶ 再生';
+      video.addEventListener('ended', function onEnd() {
+        video.removeEventListener('ended', onEnd);
+        cancelAnimationFrame(exportRaf);
+        // Small delay to capture last frames
+        setTimeout(() => {
+          recorder.stop();
+          isPlaying = false;
+          resetTrainState();
+          btnPlay.textContent = '\u25B6 再生';
+        }, 200);
+      });
     });
   }
 
